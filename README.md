@@ -1,72 +1,95 @@
-<!--
-Copyright (c) Meta Platforms, Inc. and affiliates.
+# OpenClaw Gadgets
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+A public development fork of [Meta's Muse Gadgets SDK](https://github.com/facebookincubator/muse-gadget-sdk),
+working toward physical interfaces for a user-owned OpenClaw assistant.
 
-    http://www.apache.org/licenses/LICENSE-2.0
+The first addition is a **host-side text adapter**. It sends a question to an
+explicitly selected OpenClaw agent through the installed Gateway CLI, then emits
+JSON Lines for a gadget's screen or controller. It uses no Muse accounts, SDK
+tokens, cloud endpoints, or imported Muse modules.
 
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
--->
+**The inherited ESP32 and Linux Muse software has not been ported.** Running
+those original builds still connects to Muse. There is no OpenClaw firmware
+image to flash from this fork yet. See [the original Muse README](README.muse.md)
+for the inherited software and [the port plan](docs/OPENCLAW_PORT.md) for the new work.
 
-# Muse Gadgets
+## Try the host adapter
 
-<p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset=".github/images/muse-gadgets-dark.png">
-    <img src=".github/images/muse-gadgets-light.png" width="900" alt="Muse gadgets: a Waveshare round AMOLED, an M5Stack StickS3, Muse Home Link, a Raspberry Pi and a Seeed reTerminal e-ink display">
-  </picture>
-</p>
+Requirements: Python 3.9+ and an installed, configured OpenClaw CLI with a running
+Gateway. The command and response contract was inspected against OpenClaw
+2026.9.7. Older CLI versions may lack `--message-file` or use a different envelope.
+No Python packages need to be installed for this adapter.
 
-Muse gadgets are open source devices you build yourself. Program an
-off-the-shelf ESP32 board or set up a Raspberry Pi with our device SDKs, then
-connect Muse to your displays, buttons, sensors, actuators, and whatever else
-you've got lying on your workbench.
+From the repository root, replace `assistant` with an existing agent id:
 
-We open sourced the SDKs and firmware here. It's built by hackers, for hackers,
-just for fun. Side effects of tinkering may include bricked boards, voided
-warranties, brownouts, or bankruptcies. Proceed at your own risk!
+```sh
+python3 -m openclaw_gadgets --agent assistant --device desk < question.txt
+```
 
-| | |
-|---|---|
-| [**ESP32 Device SDK**](esp32) | Connect your ESP32 board to Muse through our open source SDK. Throw in a screen to show images, add audio in and out, or wire up other sensors. |
-| [**Linux Device SDK**](linux) | Turn that spare Raspberry Pi or Linux box into a Muse gadget. Hack in your own commands to let Muse handle sysadmin chores or your Home Assistant setup. |
+`question.txt` is your own UTF-8 text file, kept outside the repository. You can
+also use `--message 'Hello'` for non-sensitive text. Optional `--profile lab`
+selects a configured OpenClaw profile; `--timeout 120` controls the agent timeout.
+Agent, device and profile ids use lowercase letters, digits, underscores or
+hyphens and are limited to 64 characters.
 
-Before you flash or pair a gadget, get an
-[SDK token](https://gadgets.muse.ai/settings/sdk-tokens) and review the
-[Gadget SDK Terms](https://gadgets.muse.ai/sdk-terms). Every gadget needs a
-token to pair.
+Running the adapter performs a real agent turn: it uses that agent's configured
+model, credentials, tools and permissions. Cloud providers may charge for it.
+It does not change Gateway configuration or deliver replies to messaging channels.
 
-ESP32 and Linux gadgets pair with the Muse app on iOS and Android, via
-Settings > Devices. Turn on Developer mode there first, then look for devices
-prefixed with "MuseGadget".
-Each directory has a `README.md` to get started and an `AGENTS.md` for coding
-agents like [Muse Code](https://developer.meta.com/ai/lp/muse-code/).
+Example output (synthetic):
 
-## Community
+```json
+{"type":"state","state":"thinking","device":"desk"}
+{"type":"reply","text":"Hello!","runId":"example-run","sessionKey":"agent:assistant:gadget:desk"}
+{"type":"state","state":"idle","device":"desk"}
+```
 
-Meet other hackers who are building and customizing Muse gadgets in our
-community [Discord](https://discord.gg/3bhjCkZdd6). Get inspired, support each
-other, and share what you make.
+The stable device id selects a separate conversation for that gadget, rather
+than the agent's main chat. Reusing it resumes that conversation. This does not
+isolate the agent's other capabilities or memory. Changing it selects another
+conversation.
 
-## License
+Prompts are passed to OpenClaw using a temporary file with owner-only permissions,
+removed when the call exits. Raw CLI diagnostics and model metadata are not
+projected onto the display. The configured OpenClaw agent still retains its own
+session history according to its settings.
 
-Muse Gadgets is licensed under the Apache License, Version 2.0, found in
-[`LICENSE`](LICENSE), except for these third-party files, which keep their
-upstream licenses:
+On failure the adapter emits an error and exits 1. It never retries a turn or
+silently falls back to embedded execution: after a timeout, the Gateway may
+still finish the request. Inspect the session before sending it again.
 
-| Path | Upstream | License |
-|---|---|---|
-| [`esp32/components/minimp3/include/minimp3.h`](esp32/components/minimp3) | [lieff/minimp3](https://github.com/lieff/minimp3) | CC0-1.0, see [`LICENSE`](esp32/components/minimp3/LICENSE) |
-| [`esp32/main/pixel_font.c`](esp32/main/pixel_font.c) | Adafruit GFX `glcdfont.c` | BSD-2-Clause, in the file header |
+## Test without a model or device
 
-Dependencies fetched at build time are under their own licenses: ESP-IDF
-components (into `esp32/managed_components/`), and the simulator's LVGL and
-SDL (listed in [`esp32/simulator/THIRD_PARTY.md`](esp32/simulator/THIRD_PARTY.md)).
+```sh
+python3 -m unittest discover -s tests/openclaw_gadgets -v
+```
 
-The Apache License does not cover the [Jollybot avatar](esp32/avatar).
+Tests use synthetic Gateway replies and a fake CLI. They do not contact Meta,
+OpenClaw, model providers or physical hardware. They cover routing, process
+execution, prompt-file cleanup, visible-text projection and failure handling.
+
+## Next steps
+
+1. Validate a real text round trip with a deliberately selected test agent.
+2. Choose and identify the first physical board and its exact revision.
+3. Implement its connection and text display, then test on hardware.
+4. Add audio only on hardware with a suitable microphone/speaker path.
+
+For native voice devices, evaluate the existing
+[OpenClaw ESP room component](https://github.com/openclaw/esp-openclaw-node)
+instead of rebuilding its pairing, Talk and wake behavior. E-paper and LoRa
+devices need their own display/transport decisions.
+
+## Upstream and licensing
+
+Starting upstream revision: `693cde9a884ad1edc87251b9f8944815f8de4809`
+(October 4, 2026 checkout). Local development keeps `upstream` for Meta's
+repository and `origin` for this fork.
+
+The inherited SDK and new adapter use [Apache-2.0](LICENSE), subject to the
+upstream dependency exceptions documented in [README.muse.md](README.muse.md#license).
+Existing copyright notices remain intact. **The upstream Jollybot avatar is
+excluded from Apache-2.0.** Its inherited files are not relicensed by this fork;
+new OpenClaw gadget interfaces should use original artwork.
+
+This is an independent experiment, not an official Meta or OpenClaw product.
